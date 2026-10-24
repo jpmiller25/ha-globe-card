@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>globe-card smoke test</title>
+  <style>
+    body { background: #111; color: #eee; font-family: sans-serif; }
+    ha-card { display: block; background: #1c1c1c; border-radius: 12px; padding: 8px; }
+    button { background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h3>globe-card smoke test (fake hass, no real HA instance)</h3>
+  <p>Card is nested inside two layers of shadow DOM, like the real HA frontend.</p>
+  <button id="resize-btn">Toggle width (tests ResizeObserver)</button>
+  <div id="shadow-host-outer"></div>
+
+  <script type="module">
+    import './../globe-card.js';
+
+    const outerHost = document.getElementById('shadow-host-outer');
+    const outerRoot = outerHost.attachShadow({ mode: 'open' });
+    const innerHost = document.createElement('div');
+    outerRoot.appendChild(innerHost);
+    const innerRoot = innerHost.attachShadow({ mode: 'open' });
+
+    const card = document.createElement('globe-card');
+    card.id = 'card';
+    card.style.display = 'block';
+    card.style.maxWidth = '600px';
+    innerRoot.appendChild(card);
+
+    let wide = false;
+    document.getElementById('resize-btn').addEventListener('click', () => {
+      wide = !wide;
+      card.style.maxWidth = wide ? '1100px' : '600px';
+    });
+
+    card.setConfig({});
+    // Fake a minimal hass object with zone.home, like HA would provide.
+    card.hass = {
+      states: {
+        'zone.home': {
+          attributes: {
+            latitude: 29.5844,   // Pearland, TX - matches this household's water/electric data
+            longitude: -95.2860,
+          },
+        },
+      },
+    };
+  </script>
+</body>
+</html>
