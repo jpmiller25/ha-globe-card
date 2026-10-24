@@ -61,35 +61,75 @@ function countryColor(feat) {
 
 // The Natural Earth dataset has no ready-made label point (no LABEL_X/
 // LABEL_Y field - just LABELRANK, a display-priority number, not a
-// coordinate), so there's no library-provided place to put a country name.
-// This derives a rough visual center instead: the plain vertex average of
+// coordinate) and no area field either, so there's no library-provided place
+// to put a country name or size it by country size. This derives both from
 // the country's largest ring (by point count, as a stand-in for "biggest
-// landmass" - not a true area-weighted centroid, but close enough for
-// placing a name, and cheap). Computed once per country the first time
-// labels are turned on, then cached.
-function countryCentroid(feat) {
+// landmass" - island nations and far-flung territories are ignored, not
+// worth the complexity for a name tag): its vertex average as a rough visual
+// center, and its lat/lng bounding-box area as a rough size proxy (not true
+// geographic area, but cheap, and enough to tell Russia from Luxembourg).
+// Longitude is unwrapped across the antimeridian when a ring's raw span
+// looks bogus (>180 degrees) - Russia's mainland ring genuinely crosses it,
+// and a naive min/max would otherwise read it as stretching almost all the
+// way around the globe instead of ~100 degrees.
+function countryLabelInfo(feat) {
   const geom = feat.geometry;
   const rings = geom.type === 'Polygon' ? [geom.coordinates[0]] : geom.coordinates.map((poly) => poly[0]);
   const largest = rings.reduce((a, b) => (b.length > a.length ? b : a));
-  let lng = 0;
-  let lat = 0;
+
+  let lngSum = 0;
+  let latSum = 0;
+  let lngs = [];
+  const lats = [];
   largest.forEach(([x, y]) => {
-    lng += x;
-    lat += y;
+    lngSum += x;
+    latSum += y;
+    lngs.push(x);
+    lats.push(y);
   });
-  return { lat: lat / largest.length, lng: lng / largest.length };
+
+  if (Math.max(...lngs) - Math.min(...lngs) > 180) {
+    lngs = lngs.map((x) => (x < 0 ? x + 360 : x));
+  }
+  const area = (Math.max(...lngs) - Math.min(...lngs)) * (Math.max(...lats) - Math.min(...lats));
+
+  return {
+    lat: latSum / largest.length,
+    lng: lngSum / largest.length,
+    text: feat.properties.NAME,
+    area,
+  };
 }
+
+const COUNTRY_LABEL_MIN_SIZE = 0.45;
+const COUNTRY_LABEL_MAX_SIZE = 1.5;
 
 // Shared across every card instance, same reasoning as ensureCountriesLoaded.
 let countryLabelsPromise = null;
 function ensureCountryLabelsLoaded() {
   if (!countryLabelsPromise) {
-    countryLabelsPromise = ensureCountriesLoaded().then((geo) =>
-      geo.features.map((feat) => {
-        const c = countryCentroid(feat);
-        return { kind: 'country', lat: c.lat, lng: c.lng, text: feat.properties.NAME };
-      })
-    );
+    countryLabelsPromise = ensureCountriesLoaded().then((geo) => {
+      // Antarctica's ring wraps nearly the full globe east-west (it's drawn
+      // as a band around the pole, not an ordinary landmass outline), which
+      // blows out its bounding-box "area" far past every real country and
+      // badly skews the min/max size scale for everyone else. Left off the
+      // label list entirely rather than special-cased into the scale.
+      const infos = geo.features.filter((f) => f.properties.CONTINENT !== 'Antarctica').map(countryLabelInfo);
+      // sqrt compresses the dynamic range (area, not linear size, is what
+      // varies country-to-country) before spreading it across the min/max
+      // label size range, so the biggest countries don't dwarf everything
+      // else into illegibility.
+      const scaled = infos.map((info) => Math.sqrt(info.area));
+      const lo = Math.min(...scaled);
+      const hi = Math.max(...scaled);
+      return infos.map((info, i) => ({
+        kind: 'country',
+        lat: info.lat,
+        lng: info.lng,
+        text: info.text,
+        size: COUNTRY_LABEL_MIN_SIZE + ((scaled[i] - lo) / (hi - lo)) * (COUNTRY_LABEL_MAX_SIZE - COUNTRY_LABEL_MIN_SIZE),
+      }));
+    });
   }
   return countryLabelsPromise;
 }
@@ -206,8 +246,15 @@ class GlobeCard extends HTMLElement {
       .pointRadius(0.4)
       .labelsData([this._home])
       .labelText('text')
-      .labelSize((d) => (d.kind === 'home' ? 1.4 : 0.55))
-      .labelColor((d) => (d.kind === 'home' ? '#ffffff' : 'rgba(255,255,255,0.85)'))
+      .labelSize((d) => (d.kind === 'home' ? 1.4 : d.size))
+      .labelColor((d) => {
+        if (d.kind === 'home') return '#ffffff';
+        // Country labels need to read against whatever's under them: white
+        // shows up on Satellite's darker photo imagery, but washes out on
+        // Geographic/Political's lighter land colors, where black reads
+        // better.
+        return this._config.view === 'satellite' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)';
+      })
       .labelDotRadius((d) => (d.kind === 'home' ? 0.3 : 0))
       .labelAltitude((d) => (d.kind === 'home' ? 0.021 : 0.006))
       .labelResolution(2)
@@ -276,6 +323,11 @@ class GlobeCard extends HTMLElement {
           .polygonAltitude(0.006);
       });
     }
+
+    // labelColor's accessor reads this._config.view, but accessors only get
+    // re-run when the labels layer's data is re-set, not just because the
+    // view changed out from under it - so force that re-evaluation here.
+    this._refreshLabels();
   }
 
   _setAutoRotate(on) {
@@ -288,8 +340,11 @@ class GlobeCard extends HTMLElement {
     this._config.show_country_labels = on;
     this._labelsToggleBtn.style.background = on ? '#444' : '';
     this._labelsToggleBtn.style.fontWeight = on ? 'bold' : '';
+    this._refreshLabels();
+  }
 
-    if (!on) {
+  _refreshLabels() {
+    if (!this._config.show_country_labels) {
       this._globe.labelsData([this._home]);
       return;
     }

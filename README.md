@@ -66,10 +66,15 @@ play/pause button on the right toggles auto-rotation.
   underlying library has an unresolved licensing question).
 - Country name labels (`show_country_labels` / the Labels button) use the
   same Natural Earth dataset as the Political view, but it has no ready-made
-  label coordinate (no LABEL_X/LABEL_Y field) - so each label's position is
-  the plain vertex average of that country's largest ring, computed once and
-  cached the first time labels are turned on. Close enough to "the middle of
-  the country" for a name tag, not a precise cartographic centroid.
+  label coordinate (no LABEL_X/LABEL_Y field) and no area field - so each
+  label's position is the plain vertex average of that country's largest
+  ring, and its size is scaled (sqrt-compressed, so it's not linear) from
+  that same ring's lat/lng bounding-box area, both computed once and cached
+  the first time labels are turned on. Close enough to place and size a name
+  tag, not precise cartography - Antarctica is excluded since its ring wraps
+  most of the globe and would otherwise wreck the size scale for everyone
+  else. Label color follows the current view: white on Satellite's darker
+  imagery, black on Geographic/Political's lighter land colors.
 - The zoom range (`min_altitude`/`max_altitude`) is enforced via the
   OrbitControls instance globe.gl exposes through `.controls()` - standard
   ThreeJS `minDistance`/`maxDistance`, not anything globe.gl-specific.
