@@ -32,7 +32,7 @@ max_height: 620px
 home_label: Home            # text on the marker at zone.home (default "Home")
 show_country_labels: false  # country name labels on, via the Labels button (default off)
 zoom_altitude: 2            # initial camera distance, in globe.gl's own pointOfView altitude units (globe radii; library default is 2.5)
-min_altitude: 1.3           # closest zoom-in allowed, same units - past this the texture has no more detail to show, just blur
+min_altitude: 1.1           # closest zoom-in allowed, same units - past this the texture has no more detail to show, just blur
 max_altitude: 3.5           # farthest zoom-out allowed, same units
 ```
 

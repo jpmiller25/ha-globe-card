@@ -110,7 +110,7 @@ const DEFAULT_CONFIG = {
   // distance as a multiple of the globe's radius - library default is 2.5).
   // Smaller = more zoomed in/closer to the surface.
   zoom_altitude: 2, // initial camera distance
-  min_altitude: 1.3, // closest zoom-in allowed - past this the base texture just looks blurry, it has no more detail to show
+  min_altitude: 1.1, // closest zoom-in allowed - past this the base texture just looks blurry, it has no more detail to show
   max_altitude: 3.5, // farthest zoom-out allowed
 };
 
