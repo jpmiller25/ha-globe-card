@@ -25,6 +25,13 @@ const TOPOLOGY_IMG = TEXTURE_BASE + 'earth-topology.png';
 const COUNTRIES_COMMIT = '6820a9c794bddde8e842bb203eaa698f6ed7adfe';
 const COUNTRIES_URL = `https://cdn.jsdelivr.net/gh/vasturiano/globe.gl@${COUNTRIES_COMMIT}/example/datasets/ne_110m_admin_0_countries.geojson`;
 
+// Used when `home_entity` doesn't exist or has no latitude/longitude
+// attributes - the equator, mid-Atlantic, roughly halfway between the
+// Brazilian and African coastlines. Open ocean, nowhere near a border or
+// landmark, so a misconfigured card reads as "not pointing anywhere real"
+// rather than looking like a deliberate (if odd) location choice.
+const FALLBACK_LATLNG = { lat: 0, lng: -21 };
+
 let libPromise = null;
 function ensureLibLoaded() {
   if (!libPromise) {
@@ -135,17 +142,30 @@ function ensureCountryLabelsLoaded() {
 }
 
 const VIEWS = ['geographic', 'satellite', 'political'];
+const VIEW_LABELS = { geographic: 'Geographic', satellite: 'Satellite', political: 'Political' };
 
 const DEFAULT_CONFIG = {
   title: 'Globe',
+  show_header: true,
   view: 'geographic',
+  views: ['geographic', 'satellite', 'political'], // which view buttons are shown, and in what order
   autorotate: true,
   rotate_speed: 0.1,
+  allow_zoom: true,
+  show_play_pause: true,
   max_width: '1100px',
   aspect_ratio: '16 / 9',
   max_height: '620px',
+  home_entity: 'zone.home', // any entity with latitude/longitude attributes - zone, person, device_tracker
   home_label: 'Home',
+  show_home_icon: true,
   show_country_labels: false,
+  // Label text color per view - defaults match the original hardcoded rule
+  // (white reads on Satellite's darker imagery, black on the lighter
+  // Geographic/Political land colors). Any CSS color string works.
+  label_color_geographic: '#000000',
+  label_color_satellite: '#ffffff',
+  label_color_political: '#000000',
   // All three below are globe.gl's own pointOfView "altitude" units (camera
   // distance as a multiple of the globe's radius - library default is 2.5).
   // Smaller = more zoomed in/closer to the surface.
@@ -154,26 +174,184 @@ const DEFAULT_CONFIG = {
   max_altitude: 3.5, // farthest zoom-out allowed
 };
 
+// GUI configuration editor, backed by Home Assistant's own <ha-form> element
+// (the same one the built-in cards use) rather than hand-built inputs - it
+// already knows how to render an entity picker, booleans, numbers, and
+// grouped/expandable sections from a plain schema array, so there's no
+// custom widget code to write or validate here.
+const EDITOR_SCHEMA = [
+  { name: 'home_entity', selector: { entity: { domain: ['zone', 'person', 'device_tracker'] } } },
+  { name: 'show_home_icon', selector: { boolean: {} } },
+  { name: 'home_label', selector: { text: {} } },
+  { name: 'view', selector: { select: { mode: 'dropdown', options: VIEWS.map((v) => ({ value: v, label: VIEW_LABELS[v] })) } } },
+  { name: 'views', selector: { select: { multiple: true, mode: 'list', options: VIEWS.map((v) => ({ value: v, label: VIEW_LABELS[v] })) } } },
+  { name: 'show_country_labels', selector: { boolean: {} } },
+  { name: 'show_play_pause', selector: { boolean: {} } },
+  { name: 'show_header', selector: { boolean: {} } },
+  { name: 'title', selector: { text: {} } },
+  {
+    name: 'label_colors',
+    type: 'expandable',
+    title: 'Label colors',
+    schema: [
+      { name: 'label_color_geographic', selector: { text: {} } },
+      { name: 'label_color_satellite', selector: { text: {} } },
+      { name: 'label_color_political', selector: { text: {} } },
+    ],
+  },
+  {
+    name: 'rotation_zoom',
+    type: 'expandable',
+    title: 'Rotation & zoom',
+    schema: [
+      { name: 'autorotate', selector: { boolean: {} } },
+      { name: 'rotate_speed', selector: { number: { min: 0.01, max: 2, step: 0.01, mode: 'box' } } },
+      { name: 'allow_zoom', selector: { boolean: {} } },
+      { name: 'zoom_altitude', selector: { number: { min: 1, max: 10, step: 0.1, mode: 'box' } } },
+      { name: 'min_altitude', selector: { number: { min: 1, max: 10, step: 0.01, mode: 'box' } } },
+      { name: 'max_altitude', selector: { number: { min: 1, max: 10, step: 0.1, mode: 'box' } } },
+    ],
+  },
+  {
+    name: 'sizing',
+    type: 'expandable',
+    title: 'Card size',
+    schema: [
+      { name: 'max_width', selector: { text: {} } },
+      { name: 'aspect_ratio', selector: { text: {} } },
+      { name: 'max_height', selector: { text: {} } },
+    ],
+  },
+];
+
+const EDITOR_LABELS = {
+  home_entity: 'Home entity',
+  show_home_icon: 'Show home marker',
+  home_label: 'Home marker label',
+  view: 'Default view',
+  views: 'Available view buttons',
+  show_country_labels: 'Country labels on by default',
+  show_play_pause: 'Show play/pause button',
+  show_header: 'Show card header',
+  title: 'Card title',
+  label_color_geographic: 'Geographic view',
+  label_color_satellite: 'Satellite view',
+  label_color_political: 'Political view',
+  autorotate: 'Auto-rotate by default',
+  rotate_speed: 'Rotation speed',
+  allow_zoom: 'Allow zoom',
+  zoom_altitude: 'Initial zoom (altitude)',
+  min_altitude: 'Closest zoom-in allowed (altitude)',
+  max_altitude: 'Farthest zoom-out allowed (altitude)',
+  max_width: 'Max width (CSS)',
+  aspect_ratio: 'Aspect ratio (CSS)',
+  max_height: 'Max height (CSS)',
+};
+
+class GlobeCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+  }
+
+  connectedCallback() {
+    this._render();
+  }
+
+  _render() {
+    if (!this._config) return;
+    if (!this._form) {
+      this._form = document.createElement('ha-form');
+      this._form.addEventListener('value-changed', (ev) => {
+        ev.stopPropagation();
+        this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: ev.detail.value } }));
+      });
+      this.innerHTML = '';
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.data = { ...DEFAULT_CONFIG, ...this._config };
+    this._form.schema = EDITOR_SCHEMA;
+    this._form.computeLabel = (schema) => EDITOR_LABELS[schema.name] || schema.name;
+  }
+}
+
+customElements.define('globe-card-editor', GlobeCardEditor);
+
 class GlobeCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement('globe-card-editor');
+  }
+
+  static getStubConfig() {
+    return { ...DEFAULT_CONFIG };
+  }
+
   setConfig(config) {
     if (config.view && !VIEWS.includes(config.view)) {
       throw new Error(`globe-card: view must be one of ${VIEWS.join(', ')}`);
     }
-    this._config = { ...DEFAULT_CONFIG, ...config };
+    const prevView = this._config && this._config.view;
+
+    const merged = { ...DEFAULT_CONFIG, ...config };
+    let views = Array.isArray(config.views) ? config.views.filter((v) => VIEWS.includes(v)) : DEFAULT_CONFIG.views;
+    if (!views.length) views = DEFAULT_CONFIG.views;
+    if (!views.includes(merged.view)) merged.view = views[0]; // e.g. default view got excluded from the enabled-views list
+    merged.views = views;
+
+    this._config = merged;
+    this._resolveHomeLocation();
+
+    // setConfig can be called again on an already-built, already-rendered
+    // card - the GUI editor's live preview does exactly this on every field
+    // change. Re-apply whatever changed instead of assuming this is always
+    // the first/only call.
+    if (this._built) {
+      this._applyHeaderAndSize();
+      this._renderToolbar();
+    }
+    if (this._globe) {
+      this._applyConfigToGlobe(prevView);
+    }
     this._maybeInit();
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._latlong) {
-      const zone = hass.states['zone.home'];
-      if (zone && zone.attributes.latitude != null) {
-        this._latlong = {
-          lat: zone.attributes.latitude,
-          lng: zone.attributes.longitude,
-        };
-        this._maybeInit();
-      }
+    this._resolveHomeLocation();
+  }
+
+  // Resolves `home_entity` to a lat/lng, falling back to FALLBACK_LATLNG if
+  // the entity doesn't exist or has no latitude/longitude attributes. Cheap
+  // to call on every hass update (it's called on every one, since `hass` is
+  // set on every state change anywhere in HA, not just this entity) because
+  // it bails out immediately unless the entity id or its resolved coordinate
+  // actually changed - so it also doubles as "recover once the entity shows
+  // up" and "follow a moving person/device_tracker" without extra plumbing.
+  _resolveHomeLocation() {
+    if (!this._hass || !this._config) return;
+    const entityId = this._config.home_entity || DEFAULT_CONFIG.home_entity;
+    const state = this._hass.states[entityId];
+    const lat = state && state.attributes.latitude;
+    const lng = state && state.attributes.longitude;
+    const resolved = lat != null && lng != null ? { lat, lng } : FALLBACK_LATLNG;
+
+    const unchanged =
+      this._resolvedEntityId === entityId && this._latlong && this._latlong.lat === resolved.lat && this._latlong.lng === resolved.lng;
+    if (unchanged) return;
+
+    this._resolvedEntityId = entityId;
+    this._latlong = resolved;
+
+    if (this._globe) {
+      this._applyHomeMarker();
+    } else {
+      this._maybeInit();
     }
   }
 
@@ -188,29 +366,19 @@ class GlobeCard extends HTMLElement {
     // instead of the card clamping to its container.
     this.style.cssText = 'display:block;min-width:0;height:auto!important;align-self:flex-start;';
     this.innerHTML = `
-      <ha-card header="${cfg.title}" style="overflow:hidden;width:min(100%, ${cfg.max_width});min-width:0;margin:0 auto;height:auto!important;align-self:flex-start;--ha-card-border-radius:12px;--ha-card-box-shadow:0px 2px 8px rgba(0,0,0,0.3);">
-        <div style="position:relative;width:100%;aspect-ratio:${cfg.aspect_ratio};max-height:${cfg.max_height};background:#000;">
+      <ha-card style="overflow:hidden;min-width:0;margin:0 auto;height:auto!important;align-self:flex-start;--ha-card-border-radius:12px;--ha-card-box-shadow:0px 2px 8px rgba(0,0,0,0.3);">
+        <div class="gc-aspect" style="position:relative;width:100%;background:#000;">
           <div id="${this._uid}" style="width:100%;height:100%;overflow:hidden;"></div>
-          <div style="position:absolute;bottom:10px;left:10px;display:flex;gap:6px;">
-            <button class="gc-view" data-view="geographic" style="font-size:18px;padding:6px 12px;">Geographic</button>
-            <button class="gc-view" data-view="satellite" style="font-size:18px;padding:6px 12px;">Satellite</button>
-            <button class="gc-view" data-view="political" style="font-size:18px;padding:6px 12px;">Political</button>
-          </div>
-          <div style="position:absolute;bottom:10px;right:10px;display:flex;gap:6px;">
-            <button class="gc-labels-toggle" style="font-size:18px;padding:6px 12px;">Labels</button>
-            <button class="gc-playpause" style="font-size:22px;padding:6px 16px;"></button>
-          </div>
+          <div class="gc-view-row" style="position:absolute;bottom:10px;left:10px;display:flex;gap:6px;"></div>
+          <div class="gc-control-row" style="position:absolute;bottom:10px;right:10px;display:flex;gap:6px;"></div>
         </div>
       </ha-card>
     `;
+    this._cardEl = this.querySelector('ha-card');
+    this._aspectEl = this.querySelector('.gc-aspect');
     this._container = this.querySelector('#' + this._uid);
-    this._playPauseBtn = this.querySelector('.gc-playpause');
-    this._labelsToggleBtn = this.querySelector('.gc-labels-toggle');
-    this.querySelectorAll('.gc-view').forEach((btn) => {
-      btn.addEventListener('click', () => this._applyView(btn.dataset.view));
-    });
-    this._playPauseBtn.addEventListener('click', () => this._setAutoRotate(!this._config.autorotate));
-    this._labelsToggleBtn.addEventListener('click', () => this._setLabelsVisible(!this._config.show_country_labels));
+    this._applyHeaderAndSize();
+    this._renderToolbar();
     this._maybeInit();
   }
 
@@ -218,8 +386,69 @@ class GlobeCard extends HTMLElement {
     return 4;
   }
 
+  _applyHeaderAndSize() {
+    if (!this._cardEl) return;
+    if (this._config.show_header) {
+      this._cardEl.setAttribute('header', this._config.title);
+    } else {
+      this._cardEl.removeAttribute('header');
+    }
+    this._cardEl.style.width = `min(100%, ${this._config.max_width})`;
+    this._aspectEl.style.aspectRatio = this._config.aspect_ratio;
+    this._aspectEl.style.maxHeight = this._config.max_height;
+  }
+
+  // Rebuilds only the two button-row overlays, never the canvas container
+  // (#uid div) - globe.gl/three.js hold a live reference to that exact DOM
+  // node, so recreating it would tear down and need to recreate the whole
+  // WebGL scene. Called at startup and whenever the GUI editor's live
+  // preview changes something that affects which buttons exist.
+  _renderToolbar() {
+    const viewRow = this.querySelector('.gc-view-row');
+    const controlRow = this.querySelector('.gc-control-row');
+    if (!viewRow || !controlRow) return;
+
+    viewRow.innerHTML = this._config.views
+      .map((v) => `<button class="gc-view" data-view="${v}" style="font-size:18px;padding:6px 12px;">${VIEW_LABELS[v]}</button>`)
+      .join('');
+    viewRow.querySelectorAll('.gc-view').forEach((btn) => {
+      btn.addEventListener('click', () => this._applyView(btn.dataset.view));
+    });
+
+    controlRow.innerHTML = `
+      <button class="gc-labels-toggle" style="font-size:18px;padding:6px 12px;">Labels</button>
+      ${this._config.show_play_pause ? '<button class="gc-playpause" style="font-size:22px;padding:6px 16px;"></button>' : ''}
+    `;
+    this._labelsToggleBtn = controlRow.querySelector('.gc-labels-toggle');
+    this._labelsToggleBtn.addEventListener('click', () => this._setLabelsVisible(!this._config.show_country_labels));
+    this._playPauseBtn = controlRow.querySelector('.gc-playpause');
+    if (this._playPauseBtn) {
+      this._playPauseBtn.addEventListener('click', () => this._setAutoRotate(!this._config.autorotate));
+    }
+
+    this._reflectToolbarState();
+  }
+
+  // Re-applies current state (active view, labels-on, play/pause icon) onto
+  // whatever button DOM nodes exist right now - needed after _renderToolbar
+  // rebuilds them from scratch, since the new nodes start with no memory of it.
+  _reflectToolbarState() {
+    this.querySelectorAll('.gc-view').forEach((btn) => {
+      const active = btn.dataset.view === this._config.view;
+      btn.style.background = active ? '#444' : '';
+      btn.style.fontWeight = active ? 'bold' : '';
+    });
+    if (this._labelsToggleBtn) {
+      this._labelsToggleBtn.style.background = this._config.show_country_labels ? '#444' : '';
+      this._labelsToggleBtn.style.fontWeight = this._config.show_country_labels ? 'bold' : '';
+    }
+    if (this._playPauseBtn) {
+      this._playPauseBtn.textContent = this._config.autorotate ? '⏸' : '▶';
+    }
+  }
+
   // Only initialize once we have: the DOM container, the config, AND the
-  // home coordinates from hass - these three arrive in no particular order.
+  // home coordinates - these three arrive in no particular order.
   _maybeInit() {
     if (this._globe || !this._container || !this._config || !this._latlong) return;
     ensureLibLoaded().then(
@@ -236,22 +465,14 @@ class GlobeCard extends HTMLElement {
   }
 
   _createGlobe() {
-    this._home = { kind: 'home', lat: this._latlong.lat, lng: this._latlong.lng, text: this._config.home_label };
-
     this._globe = new window.Globe(this._container, { rendererConfig: { antialias: false } })
       .backgroundColor('rgba(0,0,0,0)')
-      .pointsData([this._home])
       .pointColor(() => '#ffffff')
       .pointAltitude(0.02)
       .pointRadius(0.4)
-      .labelsData([this._home])
       .labelText('text')
       .labelSize((d) => (d.kind === 'home' ? 1.4 : d.size))
-      // All labels (including Home) need to read against whatever's under
-      // them: white shows up on Satellite's darker photo imagery, but
-      // washes out on Geographic/Political's lighter land colors, where
-      // black reads better.
-      .labelColor(() => (this._config.view === 'satellite' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)'))
+      .labelColor(() => this._config[`label_color_${this._config.view}`] || '#000000')
       .labelDotRadius((d) => (d.kind === 'home' ? 0.3 : 0))
       .labelAltitude((d) => (d.kind === 'home' ? 0.021 : 0.006))
       .labelResolution(2)
@@ -271,20 +492,22 @@ class GlobeCard extends HTMLElement {
     const controls = this._globe.controls();
     controls.enablePan = false;
     controls.autoRotateSpeed = this._config.rotate_speed;
+    controls.enableZoom = this._config.allow_zoom;
 
     // pointOfView's altitude is the camera's distance in globe-radius units
     // (library default 2.5); reading the resulting camera distance back
-    // gives the actual world-units-per-altitude-unit scale, so minDistance/
-    // maxDistance can be derived from the configured altitude limits without
-    // having to assume/hardcode three-globe's internal globe radius.
+    // gives the actual world-units-per-altitude-unit scale, cached so later
+    // zoom-bound recalculation (e.g. from a GUI editor change) doesn't need
+    // to assume/hardcode three-globe's internal globe radius, and doesn't
+    // get thrown off by the user having manually zoomed since.
     this._globe.pointOfView({ lat: this._latlong.lat, lng: this._latlong.lng, altitude: this._config.zoom_altitude });
-    const unitDistance = controls.object.position.length() / this._config.zoom_altitude;
-    controls.minDistance = unitDistance * this._config.min_altitude;
-    controls.maxDistance = unitDistance * this._config.max_altitude;
+    this._unitDistance = controls.object.position.length() / this._config.zoom_altitude;
+    this._applyZoomBounds();
 
+    this._applyHomeMarker();
     this._applyView(this._config.view);
-    this._setLabelsVisible(this._config.show_country_labels);
     this._setAutoRotate(this._config.autorotate);
+    this._reflectToolbarState();
     this._wireResize();
     // Starting size: the ResizeObserver only fires on a later size *change*,
     // so without this the globe is born at container's size-at-construction-
@@ -292,13 +515,38 @@ class GlobeCard extends HTMLElement {
     this._resizeToContainer();
   }
 
+  _applyZoomBounds() {
+    const controls = this._globe.controls();
+    controls.minDistance = this._unitDistance * this._config.min_altitude;
+    controls.maxDistance = this._unitDistance * this._config.max_altitude;
+  }
+
+  // Re-applies config to an already-created globe instance - used when
+  // setConfig runs again after _createGlobe already has (GUI editor live
+  // preview, or a dashboard YAML edit that doesn't recreate the element).
+  _applyConfigToGlobe(prevView) {
+    const controls = this._globe.controls();
+    controls.autoRotate = this._config.autorotate;
+    controls.autoRotateSpeed = this._config.rotate_speed;
+    controls.enableZoom = this._config.allow_zoom;
+    this._applyZoomBounds();
+    this._applyHomeMarker();
+    if (this._config.view !== prevView) {
+      this._applyView(this._config.view);
+    } else {
+      this._refreshLabels(); // picks up label-color changes even without a view change
+    }
+    this._reflectToolbarState();
+  }
+
+  _applyHomeMarker() {
+    this._home = { kind: 'home', lat: this._latlong.lat, lng: this._latlong.lng, text: this._config.home_label };
+    this._globe.pointsData(this._config.show_home_icon ? [this._home] : []);
+    this._refreshLabels();
+  }
+
   _applyView(view) {
     this._config.view = view;
-    this.querySelectorAll('.gc-view').forEach((btn) => {
-      const active = btn.dataset.view === view;
-      btn.style.background = active ? '#444' : '';
-      btn.style.fontWeight = active ? 'bold' : '';
-    });
 
     if (view === 'satellite') {
       this._globe.globeImageUrl(SATELLITE_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
@@ -325,29 +573,30 @@ class GlobeCard extends HTMLElement {
     // re-run when the labels layer's data is re-set, not just because the
     // view changed out from under it - so force that re-evaluation here.
     this._refreshLabels();
+    this._reflectToolbarState();
   }
 
   _setAutoRotate(on) {
     this._config.autorotate = on;
     this._globe.controls().autoRotate = on;
-    this._playPauseBtn.textContent = on ? '⏸' : '▶';
+    this._reflectToolbarState();
   }
 
   _setLabelsVisible(on) {
     this._config.show_country_labels = on;
-    this._labelsToggleBtn.style.background = on ? '#444' : '';
-    this._labelsToggleBtn.style.fontWeight = on ? 'bold' : '';
     this._refreshLabels();
+    this._reflectToolbarState();
   }
 
   _refreshLabels() {
+    const home = this._config.show_home_icon ? [this._home] : [];
     if (!this._config.show_country_labels) {
-      this._globe.labelsData([this._home]);
+      this._globe.labelsData(home);
       return;
     }
     ensureCountryLabelsLoaded().then((countryLabels) => {
       if (!this._config.show_country_labels) return; // toggled off again while this was loading
-      this._globe.labelsData([this._home, ...countryLabels]);
+      this._globe.labelsData([...home, ...countryLabels]);
     });
   }
 

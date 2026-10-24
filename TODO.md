@@ -1,30 +1,39 @@
 # TODO
 
-## GUI configuration editor
+## GUI configuration editor - done
 
-This card is YAML-only right now - no Lovelace visual editor
-(`getConfigElement()`/`getStubConfig()`). That's fine for personal use, but
-not for a card published to the HACS default store, where people expect to
-configure it without hand-writing YAML. Not planning to submit to HACS
-until at least the items below exist.
+Implemented via `getConfigElement()`/`getStubConfig()`, backed by Home
+Assistant's own `<ha-form>` component (`GlobeCardEditor` in
+`globe-card.js`). Covers the original list:
 
-- [ ] Home entity selector - a GUI entity picker to choose which entity's
-      lat/lng drives the Home marker, instead of the hardcoded `zone.home`.
-      Needs to accept any entity exposing `latitude`/`longitude` attributes
-      (e.g. a `person.*` or `device_tracker.*`), not just zones.
-- [ ] Home icon enable/disable - a toggle to turn the marker (point + label)
-      off entirely, not just customize its text.
-- [ ] Default view selector - GUI dropdown for `view`
-      (Geographic/Satellite/Political). The YAML option already exists.
-- [ ] Default labels toggle - GUI toggle for `show_country_labels`. The
-      YAML option already exists.
-- [ ] Per-view label color override - a color picker for the Labels text,
-      settable per view (Geographic/Satellite/Political), replacing the
-      current hardcoded white-on-satellite/black-otherwise rule.
+- [x] Home entity selector (`home_entity`) - entity picker scoped to
+      `zone.*`/`person.*`/`device_tracker.*`.
+- [x] Home icon enable/disable (`show_home_icon`)
+- [x] Default view selector (`view`)
+- [x] Default labels toggle (`show_country_labels`)
+- [x] Per-view label color override (`label_color_geographic`/
+      `_satellite`/`_political`)
 
-## Also worth covering once an editor exists
+Plus, picked up along the way since they were cheap once `ha-form` was
+wired in: which view buttons are shown and in what order (`views`), hiding
+the play/pause button (`show_play_pause`), hiding the card header
+(`show_header`), locking out zoom (`allow_zoom`), and GUI rows for the
+remaining YAML options (rotation speed, zoom bounds, card sizing).
 
-For full GUI parity, not just the five above, the rest of the current
-YAML-only options should probably get editor rows too: `title`,
-`home_label`, `rotate_speed`, `zoom_altitude`/`min_altitude`/`max_altitude`,
-`max_width`/`aspect_ratio`/`max_height`.
+## Deliberately not done
+
+- **Multiple markers.** Tracking more than one entity on the globe at once
+  is a bigger change to the data model than a config option - `home_entity`
+  is still a single entity. Explicitly out of scope for this round.
+
+## Before HACS submission
+
+- [ ] Verify the GUI editor renders and behaves correctly in a real browser
+      - it was written and reviewed without being click-tested live (see
+        the WebGL/sandbox limitation noted during the original build), though
+        the editor itself doesn't need WebGL so it should be easier to check
+        than the globe rendering.
+- [ ] Decide whether a missing/invalid `home_entity` should show a visible
+      warning on the card instead of silently falling back to the
+      mid-Atlantic location - fine for personal use, but a strangers'-eyes
+      HACS release probably shouldn't fail that quietly.
