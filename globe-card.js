@@ -59,6 +59,41 @@ function countryColor(feat) {
   return `hsl(${hash % 360}, 55%, 55%)`;
 }
 
+// The Natural Earth dataset has no ready-made label point (no LABEL_X/
+// LABEL_Y field - just LABELRANK, a display-priority number, not a
+// coordinate), so there's no library-provided place to put a country name.
+// This derives a rough visual center instead: the plain vertex average of
+// the country's largest ring (by point count, as a stand-in for "biggest
+// landmass" - not a true area-weighted centroid, but close enough for
+// placing a name, and cheap). Computed once per country the first time
+// labels are turned on, then cached.
+function countryCentroid(feat) {
+  const geom = feat.geometry;
+  const rings = geom.type === 'Polygon' ? [geom.coordinates[0]] : geom.coordinates.map((poly) => poly[0]);
+  const largest = rings.reduce((a, b) => (b.length > a.length ? b : a));
+  let lng = 0;
+  let lat = 0;
+  largest.forEach(([x, y]) => {
+    lng += x;
+    lat += y;
+  });
+  return { lat: lat / largest.length, lng: lng / largest.length };
+}
+
+// Shared across every card instance, same reasoning as ensureCountriesLoaded.
+let countryLabelsPromise = null;
+function ensureCountryLabelsLoaded() {
+  if (!countryLabelsPromise) {
+    countryLabelsPromise = ensureCountriesLoaded().then((geo) =>
+      geo.features.map((feat) => {
+        const c = countryCentroid(feat);
+        return { kind: 'country', lat: c.lat, lng: c.lng, text: feat.properties.NAME };
+      })
+    );
+  }
+  return countryLabelsPromise;
+}
+
 const VIEWS = ['geographic', 'satellite', 'political'];
 
 const DEFAULT_CONFIG = {
@@ -70,6 +105,13 @@ const DEFAULT_CONFIG = {
   aspect_ratio: '16 / 9',
   max_height: '620px',
   home_label: 'Home',
+  show_country_labels: false,
+  // All three below are globe.gl's own pointOfView "altitude" units (camera
+  // distance as a multiple of the globe's radius - library default is 2.5).
+  // Smaller = more zoomed in/closer to the surface.
+  zoom_altitude: 2, // initial camera distance
+  min_altitude: 1.3, // closest zoom-in allowed - past this the base texture just looks blurry, it has no more detail to show
+  max_altitude: 3.5, // farthest zoom-out allowed
 };
 
 class GlobeCard extends HTMLElement {
@@ -114,7 +156,8 @@ class GlobeCard extends HTMLElement {
             <button class="gc-view" data-view="satellite" style="font-size:18px;padding:6px 12px;">Satellite</button>
             <button class="gc-view" data-view="political" style="font-size:18px;padding:6px 12px;">Political</button>
           </div>
-          <div style="position:absolute;bottom:10px;right:10px;">
+          <div style="position:absolute;bottom:10px;right:10px;display:flex;gap:6px;">
+            <button class="gc-labels-toggle" style="font-size:18px;padding:6px 12px;">Labels</button>
             <button class="gc-playpause" style="font-size:22px;padding:6px 16px;"></button>
           </div>
         </div>
@@ -122,10 +165,12 @@ class GlobeCard extends HTMLElement {
     `;
     this._container = this.querySelector('#' + this._uid);
     this._playPauseBtn = this.querySelector('.gc-playpause');
+    this._labelsToggleBtn = this.querySelector('.gc-labels-toggle');
     this.querySelectorAll('.gc-view').forEach((btn) => {
       btn.addEventListener('click', () => this._applyView(btn.dataset.view));
     });
     this._playPauseBtn.addEventListener('click', () => this._setAutoRotate(!this._config.autorotate));
+    this._labelsToggleBtn.addEventListener('click', () => this._setLabelsVisible(!this._config.show_country_labels));
     this._maybeInit();
   }
 
@@ -151,27 +196,44 @@ class GlobeCard extends HTMLElement {
   }
 
   _createGlobe() {
-    const home = [{ lat: this._latlong.lat, lng: this._latlong.lng, text: this._config.home_label }];
+    this._home = { kind: 'home', lat: this._latlong.lat, lng: this._latlong.lng, text: this._config.home_label };
 
-    this._globe = new window.Globe(this._container)
+    this._globe = new window.Globe(this._container, { rendererConfig: { antialias: false } })
       .backgroundColor('rgba(0,0,0,0)')
-      .pointsData(home)
-      .pointColor(() => '#ff3b30')
+      .pointsData([this._home])
+      .pointColor(() => '#ffffff')
       .pointAltitude(0.02)
       .pointRadius(0.4)
-      .labelsData(home)
+      .labelsData([this._home])
       .labelText('text')
-      .labelSize(1.4)
-      .labelColor(() => '#ff3b30')
-      .labelDotRadius(0.3)
-      .labelAltitude(0.021)
-      .labelResolution(2);
+      .labelSize((d) => (d.kind === 'home' ? 1.4 : 0.55))
+      .labelColor((d) => (d.kind === 'home' ? '#ffffff' : 'rgba(255,255,255,0.85)'))
+      .labelDotRadius((d) => (d.kind === 'home' ? 0.3 : 0))
+      .labelAltitude((d) => (d.kind === 'home' ? 0.021 : 0.006))
+      .labelResolution(2)
+      // Political's country polygons are the heaviest thing this card draws
+      // (one mesh per country) - these two cut real cost there: no antialias
+      // above, no transition-tweening on data changes, and coarser (fewer-
+      // triangle) curvature tessellation on the polygon caps here.
+      .polygonsTransitionDuration(0)
+      .polygonCapCurvatureResolution(10);
 
     const controls = this._globe.controls();
     controls.enablePan = false;
     controls.autoRotateSpeed = this._config.rotate_speed;
 
+    // pointOfView's altitude is the camera's distance in globe-radius units
+    // (library default 2.5); reading the resulting camera distance back
+    // gives the actual world-units-per-altitude-unit scale, so minDistance/
+    // maxDistance can be derived from the configured altitude limits without
+    // having to assume/hardcode three-globe's internal globe radius.
+    this._globe.pointOfView({ altitude: this._config.zoom_altitude });
+    const unitDistance = controls.object.position.length() / this._config.zoom_altitude;
+    controls.minDistance = unitDistance * this._config.min_altitude;
+    controls.maxDistance = unitDistance * this._config.max_altitude;
+
     this._applyView(this._config.view);
+    this._setLabelsVisible(this._config.show_country_labels);
     this._setAutoRotate(this._config.autorotate);
     this._wireResize();
     // Starting size: the ResizeObserver only fires on a later size *change*,
@@ -214,6 +276,21 @@ class GlobeCard extends HTMLElement {
     this._config.autorotate = on;
     this._globe.controls().autoRotate = on;
     this._playPauseBtn.textContent = on ? '⏸' : '▶';
+  }
+
+  _setLabelsVisible(on) {
+    this._config.show_country_labels = on;
+    this._labelsToggleBtn.style.background = on ? '#444' : '';
+    this._labelsToggleBtn.style.fontWeight = on ? 'bold' : '';
+
+    if (!on) {
+      this._globe.labelsData([this._home]);
+      return;
+    }
+    ensureCountryLabelsLoaded().then((countryLabels) => {
+      if (!this._config.show_country_labels) return; // toggled off again while this was loading
+      this._globe.labelsData([this._home, ...countryLabels]);
+    });
   }
 
   _resizeToContainer() {

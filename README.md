@@ -30,12 +30,17 @@ max_width: 1100px
 aspect_ratio: 16 / 9
 max_height: 620px
 home_label: Home            # text on the marker at zone.home (default "Home")
+show_country_labels: false  # country name labels on, via the Labels button (default off)
+zoom_altitude: 2            # initial camera distance, in globe.gl's own pointOfView altitude units (globe radii; library default is 2.5)
+min_altitude: 1.3           # closest zoom-in allowed, same units - past this the texture has no more detail to show, just blur
+max_altitude: 3.5           # farthest zoom-out allowed, same units
 ```
 
-Drag to manually rotate, pinch/scroll to zoom (panning is disabled - there's
-nowhere meaningful to pan to on a globe). The Geographic/Satellite/Political
-buttons switch the globe's imagery live; the play/pause button on the right
-toggles auto-rotation.
+Drag to manually rotate, pinch/scroll to zoom within the `min_altitude`/
+`max_altitude` bounds (panning is disabled - there's nowhere meaningful to
+pan to on a globe). The Geographic/Satellite/Political buttons switch the
+globe's imagery live; the Labels button toggles country name labels; the
+play/pause button on the right toggles auto-rotation.
 
 ## How it works
 
@@ -59,6 +64,15 @@ toggles auto-rotation.
   needed, since it's MIT-licensed with no ambiguity to resolve (unlike
   [ha-nightsky-card](https://github.com/jpmiller25/ha-nightsky-card), whose
   underlying library has an unresolved licensing question).
+- Country name labels (`show_country_labels` / the Labels button) use the
+  same Natural Earth dataset as the Political view, but it has no ready-made
+  label coordinate (no LABEL_X/LABEL_Y field) - so each label's position is
+  the plain vertex average of that country's largest ring, computed once and
+  cached the first time labels are turned on. Close enough to "the middle of
+  the country" for a name tag, not a precise cartographic centroid.
+- The zoom range (`min_altitude`/`max_altitude`) is enforced via the
+  OrbitControls instance globe.gl exposes through `.controls()` - standard
+  ThreeJS `minDistance`/`maxDistance`, not anything globe.gl-specific.
 
 ## Known limitations
 
@@ -71,3 +85,7 @@ toggles auto-rotation.
   untested - this is a WebGL 3D scene with continuous auto-rotation, which
   is meaningfully heavier than nightsky-card's 2D canvas rendering. Worth
   watching for dropped frames or high CPU/GPU usage if deployed to one.
+  The Political view (one mesh per country) is the heaviest of the three;
+  renderer antialiasing is off and polygon tessellation is coarsened
+  (`polygonCapCurvatureResolution`) to help, both via globe.gl's own
+  documented options.
