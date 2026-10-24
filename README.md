@@ -25,7 +25,7 @@ type: custom:globe-card
 title: Globe              # card header text (default "Globe")
 view: geographic            # geographic | satellite | political (default geographic)
 autorotate: true           # starts turning automatically (default true)
-rotate_speed: 0.2           # degrees/frame-ish; higher = faster (default 0.2, slow)
+rotate_speed: 0.1           # degrees/frame-ish; higher = faster (default 0.1, slow)
 max_width: 1100px
 aspect_ratio: 16 / 9
 max_height: 620px
@@ -45,7 +45,9 @@ play/pause button on the right toggles auto-rotation.
 ## How it works
 
 - Pulls latitude/longitude from `zone.home` automatically - no location
-  config needed.
+  config needed, and the card opens centered on it (the initial
+  `pointOfView` call passes `zone.home`'s lat/lng, not globe.gl's own
+  default of 0,0).
 - **Satellite** view: NASA Blue Marble true-color imagery.
 - **Geographic** view: a shaded-relief/terrain-style map.
 - **Political** view: the same photo texture as Geographic (naturally blue
@@ -73,8 +75,9 @@ play/pause button on the right toggles auto-rotation.
   the first time labels are turned on. Close enough to place and size a name
   tag, not precise cartography - Antarctica is excluded since its ring wraps
   most of the globe and would otherwise wreck the size scale for everyone
-  else. Label color follows the current view: white on Satellite's darker
-  imagery, black on Geographic/Political's lighter land colors.
+  else. Label color (including the Home marker's label) follows the current
+  view: white on Satellite's darker imagery, black on Geographic/Political's
+  lighter land colors.
 - The zoom range (`min_altitude`/`max_altitude`) is enforced via the
   OrbitControls instance globe.gl exposes through `.controls()` - standard
   ThreeJS `minDistance`/`maxDistance`, not anything globe.gl-specific.

@@ -140,7 +140,7 @@ const DEFAULT_CONFIG = {
   title: 'Globe',
   view: 'geographic',
   autorotate: true,
-  rotate_speed: 0.2,
+  rotate_speed: 0.1,
   max_width: '1100px',
   aspect_ratio: '16 / 9',
   max_height: '620px',
@@ -247,14 +247,11 @@ class GlobeCard extends HTMLElement {
       .labelsData([this._home])
       .labelText('text')
       .labelSize((d) => (d.kind === 'home' ? 1.4 : d.size))
-      .labelColor((d) => {
-        if (d.kind === 'home') return '#ffffff';
-        // Country labels need to read against whatever's under them: white
-        // shows up on Satellite's darker photo imagery, but washes out on
-        // Geographic/Political's lighter land colors, where black reads
-        // better.
-        return this._config.view === 'satellite' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)';
-      })
+      // All labels (including Home) need to read against whatever's under
+      // them: white shows up on Satellite's darker photo imagery, but
+      // washes out on Geographic/Political's lighter land colors, where
+      // black reads better.
+      .labelColor(() => (this._config.view === 'satellite' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)'))
       .labelDotRadius((d) => (d.kind === 'home' ? 0.3 : 0))
       .labelAltitude((d) => (d.kind === 'home' ? 0.021 : 0.006))
       .labelResolution(2)
@@ -280,7 +277,7 @@ class GlobeCard extends HTMLElement {
     // gives the actual world-units-per-altitude-unit scale, so minDistance/
     // maxDistance can be derived from the configured altitude limits without
     // having to assume/hardcode three-globe's internal globe radius.
-    this._globe.pointOfView({ altitude: this._config.zoom_altitude });
+    this._globe.pointOfView({ lat: this._latlong.lat, lng: this._latlong.lng, altitude: this._config.zoom_altitude });
     const unitDistance = controls.object.position.length() / this._config.zoom_altitude;
     controls.minDistance = unitDistance * this._config.min_altitude;
     controls.maxDistance = unitDistance * this._config.max_altitude;
