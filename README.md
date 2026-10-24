@@ -23,19 +23,20 @@ three.js.
 ```yaml
 type: custom:globe-card
 title: Globe              # card header text (default "Globe")
-view: satellite            # political | geographic | satellite (default satellite)
+view: geographic            # geographic | satellite | political (default geographic)
 autorotate: true           # starts turning automatically (default true)
-rotate_speed: 0.4           # degrees/frame-ish; higher = faster (default 0.4, slow)
+rotate_speed: 0.2           # degrees/frame-ish; higher = faster (default 0.2, slow)
 max_width: 1100px
 aspect_ratio: 16 / 9
 max_height: 620px
 home_label: Home            # text on the marker at zone.home (default "Home")
+political_water_color: '#1f6fb2'  # ocean color for the Political view (default a medium blue)
 ```
 
-Drag to manually rotate. Pinch/scroll-zoom and panning are disabled - this
-is meant as a wall-display globe, not a map-exploration tool. The
-Political/Geographic/Satellite buttons switch the globe's imagery live; the
-play/pause button on the right toggles auto-rotation.
+Drag to manually rotate, pinch/scroll to zoom (panning is disabled - there's
+nowhere meaningful to pan to on a globe). The Geographic/Satellite/Political
+buttons switch the globe's imagery live; the play/pause button on the right
+toggles auto-rotation.
 
 ## How it works
 
@@ -43,10 +44,10 @@ play/pause button on the right toggles auto-rotation.
   config needed.
 - **Satellite** view: NASA Blue Marble true-color imagery.
 - **Geographic** view: a shaded-relief/terrain-style map.
-- **Political** view: a plain ocean base with country polygons drawn on top,
-  each country colored from a hash of its name (stable across reloads, but
-  arbitrary - there's no meaningful legend, it's just visually distinct
-  borders).
+- **Political** view: a flat-colored ocean (`political_water_color`, no photo
+  texture) with country polygons drawn on top, each country colored from a
+  hash of its name (stable across reloads, but arbitrary - there's no
+  meaningful legend, it's just visually distinct borders).
 - All three globe textures load from three-globe's own CDN-hosted example
   assets, version-pinned. The Political view's country boundaries (Natural
   Earth 1:110m admin-0 countries, public domain) come from globe.gl's GitHub

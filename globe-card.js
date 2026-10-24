@@ -15,7 +15,6 @@ const TEXTURE_BASE = 'https://cdn.jsdelivr.net/npm/three-globe@2.45.6/example/im
 const SATELLITE_IMG = TEXTURE_BASE + 'earth-blue-marble.jpg';
 const GEOGRAPHIC_IMG = TEXTURE_BASE + 'earth-day.jpg';
 const TOPOLOGY_IMG = TEXTURE_BASE + 'earth-topology.png';
-const WATER_IMG = TEXTURE_BASE + 'earth-water.png';
 
 // The Natural Earth country-boundary GeoJSON used for the Political view
 // lives only in globe.gl's example/ folder, not published to npm - so this
@@ -60,17 +59,18 @@ function countryColor(feat) {
   return `hsl(${hash % 360}, 55%, 55%)`;
 }
 
-const VIEWS = ['political', 'geographic', 'satellite'];
+const VIEWS = ['geographic', 'satellite', 'political'];
 
 const DEFAULT_CONFIG = {
   title: 'Globe',
-  view: 'satellite',
+  view: 'geographic',
   autorotate: true,
-  rotate_speed: 0.4,
+  rotate_speed: 0.2,
   max_width: '1100px',
   aspect_ratio: '16 / 9',
   max_height: '620px',
   home_label: 'Home',
+  political_water_color: '#1f6fb2',
 };
 
 class GlobeCard extends HTMLElement {
@@ -111,9 +111,9 @@ class GlobeCard extends HTMLElement {
         <div style="position:relative;width:100%;aspect-ratio:${cfg.aspect_ratio};max-height:${cfg.max_height};background:#000;">
           <div id="${this._uid}" style="width:100%;height:100%;overflow:hidden;"></div>
           <div style="position:absolute;bottom:10px;left:10px;display:flex;gap:6px;">
-            <button class="gc-view" data-view="political" style="font-size:18px;padding:6px 12px;">Political</button>
             <button class="gc-view" data-view="geographic" style="font-size:18px;padding:6px 12px;">Geographic</button>
             <button class="gc-view" data-view="satellite" style="font-size:18px;padding:6px 12px;">Satellite</button>
+            <button class="gc-view" data-view="political" style="font-size:18px;padding:6px 12px;">Political</button>
           </div>
           <div style="position:absolute;bottom:10px;right:10px;">
             <button class="gc-playpause" style="font-size:22px;padding:6px 16px;"></button>
@@ -169,7 +169,6 @@ class GlobeCard extends HTMLElement {
       .labelResolution(2);
 
     const controls = this._globe.controls();
-    controls.enableZoom = false;
     controls.enablePan = false;
     controls.autoRotateSpeed = this._config.rotate_speed;
 
@@ -191,11 +190,19 @@ class GlobeCard extends HTMLElement {
     });
 
     if (view === 'satellite') {
+      // Textures are tinted by the material's color, so undo any blue left
+      // over from a previous Political view before applying a photo texture.
+      this._globe.globeMaterial().color.set('#ffffff');
       this._globe.globeImageUrl(SATELLITE_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
     } else if (view === 'geographic') {
+      this._globe.globeMaterial().color.set('#ffffff');
       this._globe.globeImageUrl(GEOGRAPHIC_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
     } else if (view === 'political') {
-      this._globe.globeImageUrl(WATER_IMG).bumpImageUrl(null);
+      // No photo texture here - a flat material color stands in for the
+      // ocean, so it can be any color instead of whatever earth-water.png's
+      // own coloring happened to be.
+      this._globe.globeImageUrl(null).bumpImageUrl(null);
+      this._globe.globeMaterial().color.set(this._config.political_water_color);
       ensureCountriesLoaded().then((geo) => {
         if (this._config.view !== 'political') return; // user switched away while this was loading
         this._globe
