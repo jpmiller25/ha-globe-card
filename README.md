@@ -86,6 +86,11 @@ play/pause button on the right toggles auto-rotation.
   is meaningfully heavier than nightsky-card's 2D canvas rendering. Worth
   watching for dropped frames or high CPU/GPU usage if deployed to one.
   The Political view (one mesh per country) is the heaviest of the three;
-  renderer antialiasing is off and polygon tessellation is coarsened
-  (`polygonCapCurvatureResolution`) to help, both via globe.gl's own
-  documented options.
+  renderer antialiasing is off and polygon color/data transitions are
+  untweened to help. `polygonCapCurvatureResolution` is deliberately left
+  at the library default (5) - coarsening it thins out the interior point
+  grid `three-conic-polygon-geometry` uses to Delaunay-triangulate large
+  polygons, which produced an actual rendering gap in the US outline, not
+  just a performance change. If Political is still too heavy, the next
+  thing to try would be simplifying the GeoJSON itself upstream (fewer
+  vertices per country) rather than touching this setting again.

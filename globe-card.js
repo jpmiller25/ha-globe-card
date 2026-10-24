@@ -212,11 +212,17 @@ class GlobeCard extends HTMLElement {
       .labelAltitude((d) => (d.kind === 'home' ? 0.021 : 0.006))
       .labelResolution(2)
       // Political's country polygons are the heaviest thing this card draws
-      // (one mesh per country) - these two cut real cost there: no antialias
-      // above, no transition-tweening on data changes, and coarser (fewer-
-      // triangle) curvature tessellation on the polygon caps here.
-      .polygonsTransitionDuration(0)
-      .polygonCapCurvatureResolution(10);
+      // (one mesh per country) - antialias off above and no transition-
+      // tweening on data changes both cut real cost there with no visual
+      // downside. polygonCapCurvatureResolution is deliberately left at
+      // three-globe's own default (5) - coarsening it (tried 10) measurably
+      // thins out the interior point grid the underlying
+      // three-conic-polygon-geometry library uses for large polygons'
+      // Delaunay triangulation, and for a complex shape like the US outline
+      // that produced an actual rendering gap (a patch of the base texture
+      // showing through instead of the country's fill), not just a
+      // cosmetic change. Not worth it for the perf gain.
+      .polygonsTransitionDuration(0);
 
     const controls = this._globe.controls();
     controls.enablePan = false;
