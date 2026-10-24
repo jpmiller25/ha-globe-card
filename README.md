@@ -30,7 +30,6 @@ max_width: 1100px
 aspect_ratio: 16 / 9
 max_height: 620px
 home_label: Home            # text on the marker at zone.home (default "Home")
-political_water_color: '#1f6fb2'  # ocean color for the Political view (default a medium blue)
 ```
 
 Drag to manually rotate, pinch/scroll to zoom (panning is disabled - there's
@@ -44,10 +43,12 @@ toggles auto-rotation.
   config needed.
 - **Satellite** view: NASA Blue Marble true-color imagery.
 - **Geographic** view: a shaded-relief/terrain-style map.
-- **Political** view: a flat-colored ocean (`political_water_color`, no photo
-  texture) with country polygons drawn on top, each country colored from a
-  hash of its name (stable across reloads, but arbitrary - there's no
-  meaningful legend, it's just visually distinct borders).
+- **Political** view: the same photo texture as Geographic (naturally blue
+  oceans) with country polygons drawn on top, each colored from a hash of
+  its name (stable across reloads, but arbitrary - there's no meaningful
+  legend, it's just visually distinct borders). globe.gl has no separate
+  "water color" option - the base `globeImageUrl` texture is the only
+  intended lever for ocean appearance, same as the other two views.
 - All three globe textures load from three-globe's own CDN-hosted example
   assets, version-pinned. The Political view's country boundaries (Natural
   Earth 1:110m admin-0 countries, public domain) come from globe.gl's GitHub

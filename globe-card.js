@@ -70,7 +70,6 @@ const DEFAULT_CONFIG = {
   aspect_ratio: '16 / 9',
   max_height: '620px',
   home_label: 'Home',
-  political_water_color: '#1f6fb2',
 };
 
 class GlobeCard extends HTMLElement {
@@ -190,19 +189,15 @@ class GlobeCard extends HTMLElement {
     });
 
     if (view === 'satellite') {
-      // Textures are tinted by the material's color, so undo any blue left
-      // over from a previous Political view before applying a photo texture.
-      this._globe.globeMaterial().color.set('#ffffff');
       this._globe.globeImageUrl(SATELLITE_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
     } else if (view === 'geographic') {
-      this._globe.globeMaterial().color.set('#ffffff');
       this._globe.globeImageUrl(GEOGRAPHIC_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
     } else if (view === 'political') {
-      // No photo texture here - a flat material color stands in for the
-      // ocean, so it can be any color instead of whatever earth-water.png's
-      // own coloring happened to be.
-      this._globe.globeImageUrl(null).bumpImageUrl(null);
-      this._globe.globeMaterial().color.set(this._config.political_water_color);
+      // Same photo texture as Geographic (its oceans are naturally blue) -
+      // the country polygons drawn on top are what make this view read as
+      // "political" rather than the base texture, same approach globe.gl's
+      // own choropleth-countries example uses.
+      this._globe.globeImageUrl(GEOGRAPHIC_IMG).bumpImageUrl(TOPOLOGY_IMG).polygonsData([]);
       ensureCountriesLoaded().then((geo) => {
         if (this._config.view !== 'political') return; // user switched away while this was loading
         this._globe
